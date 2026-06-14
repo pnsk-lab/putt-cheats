@@ -46,6 +46,9 @@ let uiObserver = null;
 let playerUiRefreshTimer = null;
 let refreshingPlayerUi = false;
 let lastUserListRequestedAt = 0;
+let localHealthTimer = null;
+let localStillSince = 0;
+let lastTimerWarningStopAt = 0;
 
 function decodeOpPack(data) {
   const view =
@@ -95,6 +98,10 @@ function sendGameCmd(cmd, payload) {
   const envelope = { cmd, data: payload };
   if (state.group) envelope.group = state.group;
   return sendFrame(OPCODES.GameEventSend, envelope);
+}
+
+function getServerTimeNow() {
+  return Date.now() - state.serverTimeOffset;
 }
 
 function requestUserListSoon(delay = 250) {
@@ -245,6 +252,7 @@ function handlePacket(direction, opcode, data) {
     state.spawnedBumpers = [];
     state.trajectories = {};
     clearPowerupQueue();
+    scrubLocalRuntimeArtifacts({ clearRewind: true, stopTimerWarnings: true });
     recoverLocalStateForCurrentHole({ force: true });
     setTimeout(() => recoverLocalStateForCurrentHole({ force: true }), 100);
   }
@@ -291,12 +299,14 @@ function syncRoundState(gameState) {
     state.spawnedBumpers = [];
     state.trajectories = {};
     clearPowerupQueue();
+    scrubLocalRuntimeArtifacts({ clearRewind: true, stopTimerWarnings: true });
     state.lastKnownRoundHole = currentHole;
     recoverLocalStateForCurrentHole({ force: true });
   }
   if (Number.isFinite(roundState)) {
     if (state.lastKnownRoundState !== null && state.lastKnownRoundState !== roundState) {
       clearPowerupQueue();
+      scrubLocalRuntimeArtifacts({ clearRewind: true, stopTimerWarnings: roundState !== GAME_STATE.Play });
       if (roundState === GAME_STATE.Play) recoverLocalStateForCurrentHole({ force: true });
     }
     state.lastKnownRoundState = roundState;
@@ -743,6 +753,235 @@ function removeRuntimeStatusEffects(playerId, selector, effectId, predicate, sel
   return removed;
 }
 
+function clearLocalPlayerState(options = {}) {
+  window.puttCheats.syncFromGame();
+  const localId = state.localUid;
+  if (!localId) {
+    if (!options.silent) alert("Local player is not ready.");
+    return false;
+  }
+  const cleared = clearPlayerEffectStateInternal(localId, "__all__", { silent: true });
+  scrubLocalRuntimeArtifacts({
+    clearRewind: true,
+    stopTimerWarnings: true,
+    haltIfRewinding: true,
+  });
+  const local = getLocalNetPlayer();
+  if (local?.state) {
+    const nextState = clonePlain(local.state);
+    nextState.active_status_effects = [];
+    if (Number(nextState.phase) === PLAYER_PHASE.Simulating && isLocalBallNearlyStopped()) {
+      nextState.phase = PLAYER_PHASE.WaitingOnInput;
+      nextState.vel = { x: 0, y: 0, z: 0 };
+    }
+    setLocalState(nextState);
+  }
+  refreshPlayerEffectUI();
+  updateStatus("Cleared local state");
+  log("[putt:INFO] cleared local player state", { localId, cleared });
+  return true;
+}
+
+function scrubLocalRuntimeArtifacts(options = {}) {
+  const local = getLocalNetPlayer();
+  const visual = local?.localState?.visual;
+  if (options.clearRewind) scrubRewindVisual(visual, options);
+  if (options.stopTimerWarnings) stopHoleTimerWarnings();
+  if (visual && Number(local?.state?.phase) === PLAYER_PHASE.WaitingOnInput) {
+    try {
+      visual.enableControls?.();
+    } catch (e) {
+      log("[putt:WARN] failed to enable local controls", e);
+    }
+  }
+}
+
+function scrubRewindVisual(visual, options = {}) {
+  if (!visual) return false;
+  const wasRewinding = Boolean(visual.rewindActive ?? visual._rewindActive);
+  if (!wasRewinding && !options.force) return false;
+  try {
+    window.cc?.Tween?.stopAllByTarget?.(visual.node);
+    window.cc?.tween?.stopAllByTarget?.(visual.node);
+  } catch (_) {}
+  try {
+    visual._rewindActive = false;
+    if (Array.isArray(visual._waypoints)) visual._waypoints = [];
+    if (visual.rigidbody) visual.rigidbody.isKinematic = false;
+    if (options.haltIfRewinding) {
+      visual.haltMotion?.();
+      visual.rigidbody?.clearVelocity?.();
+      visual.rigidbody?.clearForces?.();
+    }
+    visual.enableControls?.();
+  } catch (e) {
+    log("[putt:WARN] failed to scrub rewind visual", e);
+  }
+  return true;
+}
+
+function stopHoleTimerWarnings() {
+  const now = Date.now();
+  if (now - lastTimerWarningStopAt < 1500) return 0;
+  lastTimerWarningStopAt = now;
+  const scene = window.cc?.director?.getScene();
+  if (!scene) return 0;
+  let stopped = 0;
+  walkScene(scene, (node) => {
+    const components = node?.components || node?._components || [];
+    components.forEach((component) => {
+      if (!component?.timerLabel) return;
+      try {
+        component.stopWarning10?.();
+        component.stopWarning30?.();
+        if (component.timerLabel?.node) {
+          window.cc?.Tween?.stopAllByTarget?.(component.timerLabel.node);
+          window.cc?.tween?.stopAllByTarget?.(component.timerLabel.node);
+        }
+        stopped++;
+      } catch (e) {
+        log("[putt:WARN] failed to stop timer warning", e);
+      }
+    });
+    return false;
+  });
+  return stopped;
+}
+
+function isLocalBallNearlyStopped() {
+  return getLocalBallSpeed() < 0.03;
+}
+
+function getLocalBallSpeed() {
+  const local = getLocalNetPlayer();
+  const visual = local?.localState?.visual;
+  const cc = window.cc;
+  try {
+    if (visual?.rigidbody?.getLinearVelocity && cc?.Vec3) {
+      const velocity = new cc.Vec3();
+      visual.rigidbody.getLinearVelocity(velocity);
+      return Math.hypot(Number(velocity.x) || 0, Number(velocity.y) || 0, Number(velocity.z) || 0);
+    }
+  } catch (_) {}
+  const vel = normalizeVec3(local?.state?.vel || state.lastKnownLocalState?.vel);
+  return vel ? Math.hypot(vel.x, vel.y, vel.z) : Infinity;
+}
+
+function forceLocalBallStopped(reason = "stuck") {
+  const local = getLocalNetPlayer();
+  const visual = local?.localState?.visual;
+  if (!local?.state || !state.localUid) return false;
+  if (visual?.inHole) return finishLocalHole(reason);
+  const pos =
+    normalizeVec3(visual?.node?.worldPosition) ||
+    normalizeVec3(local.state.pos) ||
+    normalizeVec3(state.lastKnownLocalState?.pos);
+  if (!pos) return false;
+  try {
+    visual?.haltMotion?.();
+    visual?.rigidbody?.clearVelocity?.();
+    visual?.rigidbody?.clearForces?.();
+    visual?.enableControls?.();
+  } catch (e) {
+    log("[putt:WARN] failed to halt local ball", e);
+  }
+  setLocalState(Object.assign(clonePlain(local.state), {
+    phase: PLAYER_PHASE.WaitingOnInput,
+    pos,
+    vel: { x: 0, y: 0, z: 0 },
+  }));
+  sendGameCmd(GAME_CMD.BallStopped, { id: state.localUid, pos });
+  updateStatus(`Forced stopped (${reason})`);
+  log("[putt:INFO] forced local ball stopped", { reason, pos });
+  return true;
+}
+
+function finishLocalHole(reason = "in-hole") {
+  const local = getLocalNetPlayer();
+  const mode = getCurrentMode();
+  if (!local?.state || !state.localUid) return false;
+  try {
+    const localGolfPlayer = mode?.localGolfPlayer || mode?._localGolfPlayer;
+    if (typeof localGolfPlayer?.FinishHole === "function") {
+      localGolfPlayer.FinishHole(false);
+      updateStatus(`Finished local hole (${reason})`);
+      return true;
+    }
+  } catch (e) {
+    log("[putt:WARN] failed to call FinishHole", e);
+  }
+  const nextPhase =
+    Number(mode?.currentHole ?? mode?._currentHole ?? 0) + 1 > Number(mode?.maxHoles ?? mode?.holesPerGame ?? Infinity)
+      ? PLAYER_PHASE.GameOver
+      : PLAYER_PHASE.HoleDone;
+  setLocalState(Object.assign(clonePlain(local.state), {
+    phase: nextPhase,
+    vel: { x: 0, y: 0, z: 0 },
+  }));
+  updateStatus(`Marked local hole done (${reason})`);
+  return true;
+}
+
+function startLocalHealthWatchdog() {
+  if (localHealthTimer) return;
+  if (window.__puttLocalHealthTimer) {
+    clearInterval(window.__puttLocalHealthTimer);
+  }
+  localHealthTimer = setInterval(() => {
+    try {
+      repairLocalHealthTick();
+    } catch (e) {
+      log("[putt:WARN] local health watchdog failed", e);
+    }
+  }, 750);
+  window.__puttLocalHealthTimer = localHealthTimer;
+}
+
+function repairLocalHealthTick() {
+  const mode = getCurrentMode();
+  const local = getLocalNetPlayer();
+  if (!mode || !local?.state) return;
+  const phase = Number(local.state.phase);
+  const visual = local.localState?.visual;
+  if (visual?.inHole && phase !== PLAYER_PHASE.HoleDone && phase !== PLAYER_PHASE.GameOver) {
+    finishLocalHole("visual in hole");
+  }
+
+  const visualRewinding = Boolean(visual?.rewindActive || visual?._rewindActive);
+  const rewindEffectId =
+    visualRewinding && (state.playerEffectIds.Rewind === null || state.playerEffectIds.Rewind === undefined)
+      ? getPlayerEffectId("Rewind")
+      : state.playerEffectIds.Rewind;
+  const hasRewindState =
+    Number.isFinite(Number(rewindEffectId)) &&
+    getPlayerActiveStatusEffects(state.localUid).some((effect) => Number(getStatusEffectId(effect)) === Number(rewindEffectId));
+  if (visualRewinding && !hasRewindState) {
+    scrubRewindVisual(visual, { haltIfRewinding: true });
+  }
+
+  if (phase === PLAYER_PHASE.Simulating && !visual?.inHole) {
+    if (isLocalBallNearlyStopped()) {
+      localStillSince ||= Date.now();
+      if (Date.now() - localStillSince > 1800) forceLocalBallStopped("low velocity");
+    } else {
+      localStillSince = 0;
+    }
+  } else {
+    localStillSince = 0;
+  }
+
+  const roundState = Number(mode.gameState ?? mode._currentState);
+  const holeTimeLeft = Number(mode.holeTimeLeft);
+  if (roundState !== GAME_STATE.Play || (Number.isFinite(holeTimeLeft) && holeTimeLeft <= 0)) {
+    stopHoleTimerWarnings();
+  }
+  if (typeof mode.checkIfGameStateNeedsToChange === "function" && mode.IsPrimaryUser?.()) {
+    if (mode.AllPlayersFinishedHole?.() || (Number.isFinite(holeTimeLeft) && holeTimeLeft <= 0)) {
+      mode.checkIfGameStateNeedsToChange();
+    }
+  }
+}
+
 function updateSpawnedBumpersFromPacket(data) {
   if (data?.cmd !== GAME_CMD.ApplyStatusEffectToPlayer) return;
   const effectId = Number(data.data?.effectId ?? data.data?.effect_id);
@@ -1035,6 +1274,7 @@ function hookCocosBoot(engine) {
     window.cc = window.cc || engine;
     createUI();
     schedulePowerupIdDetection();
+    startLocalHealthWatchdog();
     updateStatus();
   };
   try {
@@ -1067,6 +1307,7 @@ function maybeCreateUiForGameDocument() {
   if (!document.getElementById("GameCanvas") && !window.cc?.game) return false;
   createUI();
   schedulePowerupIdDetection();
+  startLocalHealthWatchdog();
   updateStatus();
   return true;
 }
@@ -1125,7 +1366,7 @@ window.puttCheats = {
       id: state.localUid,
       pos,
       vel: { x: 0, y: 0, z: 0 },
-      time: Date.now() - state.serverTimeOffset,
+      time: getServerTimeNow(),
     });
     sendGameCmd(GAME_CMD.BallStopped, { id: state.localUid, pos });
   },
@@ -1177,7 +1418,7 @@ window.puttCheats = {
       });
       removeCachedPlayerCard(targetId, cardId);
     });
-    refreshPlayerItemUI();
+    refreshPlayerItemUI({ skipSync: true });
     log("[putt:INFO] remove player item sent", { targetId, cardIds, effectId });
     return true;
   },
@@ -1207,12 +1448,8 @@ window.puttCheats = {
     return true;
   },
 
-  clearPlayerEffectState(playerId, effectSelector) {
-    window.puttCheats.syncFromGame();
-    if (!playerId || !effectSelector) return alert("Select player and applied state.");
-    const ok = clearPlayerEffectStateInternal(playerId, effectSelector);
-    if (!ok) return alert("No matching applied state.");
-    return true;
+  clearPlayerEffectState() {
+    return clearLocalPlayerState();
   },
 
   putBumperAt(pos) {
@@ -1437,6 +1674,10 @@ window.puttCheats = {
       lastTeleportClickDebug: state.lastTeleportClickDebug || null,
     };
   },
+
+  repairLocalState() {
+    return clearLocalPlayerState();
+  },
 };
 
 function detectPowerupIds(options = {}) {
@@ -1476,15 +1717,17 @@ function detectPowerupIds(options = {}) {
   return true;
 }
 
-function refreshPlayerItemUI() {
+function refreshPlayerItemUI(options = {}) {
   if (refreshingPlayerUi) return;
   const playerSelect = document.getElementById("sel-player");
   if (!playerSelect) return;
-  refreshingPlayerUi = true;
-  try {
-    window.puttCheats.syncFromGame();
-  } finally {
-    refreshingPlayerUi = false;
+  if (!options.skipSync) {
+    refreshingPlayerUi = true;
+    try {
+      window.puttCheats.syncFromGame();
+    } finally {
+      refreshingPlayerUi = false;
+    }
   }
   const cardSelect = document.getElementById("sel-player-card");
   const button = document.getElementById("btn-remove-player-item");
@@ -1551,7 +1794,6 @@ function refreshPlayerEffectUI() {
   if (refreshingPlayerUi) return;
   const playerSelect = document.getElementById("sel-effect-player");
   const effectSelect = document.getElementById("sel-player-effect");
-  const clearPlayerSelect = document.getElementById("sel-clear-effect-player");
   if (!playerSelect || !effectSelect) return;
   refreshingPlayerUi = true;
   try {
@@ -1561,7 +1803,6 @@ function refreshPlayerEffectUI() {
   }
   const previousPlayer = playerSelect.value;
   const previousEffect = effectSelect.value;
-  const previousClearPlayer = clearPlayerSelect?.value;
   const players = getKnownPlayers();
   if (players.length === 0) {
     playerSelect.innerHTML = `<option value="" disabled selected>No players</option>`;
@@ -1592,65 +1833,12 @@ function refreshPlayerEffectUI() {
     }),
     previousEffect,
   );
-  if (clearPlayerSelect) {
-    const playersWithEffects = getKnownPlayers().filter((player) => getPlayerActiveStatusEffects(player.id).length > 0);
-    if (playersWithEffects.length === 0) {
-      clearPlayerSelect.innerHTML = `<option value="" disabled selected>No applied states</option>`;
-      clearPlayerSelect.dataset.optionsSignature = "";
-      clearPlayerSelect.disabled = true;
-      const clearEffectSelect = document.getElementById("sel-clear-player-effect");
-      const clearButton = document.getElementById("btn-clear-player-effect");
-      if (clearEffectSelect) {
-        clearEffectSelect.innerHTML = `<option value="" disabled selected>No applied states</option>`;
-        clearEffectSelect.dataset.optionsSignature = "";
-        clearEffectSelect.disabled = true;
-      }
-      if (clearButton) clearButton.disabled = true;
-    } else {
-      clearPlayerSelect.disabled = false;
-      setSelectOptionsStable(
-        clearPlayerSelect,
-        playersWithEffects.map((player) => ({
-          value: player.id,
-          label: `${getPlayerLabel(player.id)} [${getPlayerActiveStatusEffects(player.id).length}]`,
-        })),
-        previousClearPlayer,
-      );
-    }
-    refreshPlayerEffectStateSelect();
-  }
+  const clearButton = document.getElementById("btn-clear-player-effect");
+  if (clearButton) clearButton.disabled = !state.localUid;
 }
 
 function refreshPlayerEffectStateSelect() {
-  const playerSelect = document.getElementById("sel-clear-effect-player");
-  const effectSelect = document.getElementById("sel-clear-player-effect");
-  const button = document.getElementById("btn-clear-player-effect");
-  if (!playerSelect || !effectSelect) return;
-  const playerId = playerSelect.value;
-  const effects = getPlayerActiveStatusEffects(playerId);
-  if (!playerId || effects.length === 0) {
-    effectSelect.innerHTML = `<option value="" disabled selected>No applied states</option>`;
-    effectSelect.dataset.optionsSignature = "";
-    effectSelect.disabled = true;
-    if (button) button.disabled = true;
-    return;
-  }
-  effectSelect.disabled = false;
-  if (button) button.disabled = false;
-  setSelectOptionsStable(
-    effectSelect,
-    [
-      { value: "__all__", label: `All (${effects.length})` },
-      ...effects.map((effect, index) => {
-        const id = getStatusEffectId(effect);
-        return {
-          value: `__key__:${makeStatusEffectKey(effect, index)}`,
-          label: `${getEffectLabelById(id)} (${id})`,
-          attrs: `data-index="${index}"`,
-        };
-      }),
-    ],
-  );
+  refreshPlayerEffectUI();
 }
 
 function setSelectOptionsStable(select, entries, preferredValue = select.value) {
@@ -1706,7 +1894,7 @@ function shortenId(id) {
 
 function getPowerupNameById(id) {
   for (const [name, mappedId] of Object.entries(state.powerupMapping)) {
-    if (mappedId === id) return name;
+    if (Number(mappedId) === Number(id)) return name;
   }
   return `Powerup_${id}`;
 }
@@ -1714,7 +1902,7 @@ function getPowerupNameById(id) {
 function removeCachedPlayerCard(playerId, cardId) {
   const cards = state.players[playerId]?.cards_in_hand;
   if (!Array.isArray(cards)) return false;
-  const index = cards.indexOf(cardId);
+  const index = cards.findIndex((value) => Number(value) === Number(cardId));
   if (index < 0) return false;
   cards.splice(index, 1);
   return true;

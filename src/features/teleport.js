@@ -26,7 +26,7 @@ export function createTeleportSection(actions) {
     const goal = actions.getGoalPosition?.();
     if (!goal) return;
     root.querySelector("#tx").value = goal.x.toFixed(2);
-    root.querySelector("#ty").value = goal.y.toFixed(2) + 10;
+    root.querySelector("#ty").value = goal.y.toFixed(2) + 15;
     root.querySelector("#tz").value = goal.z.toFixed(2);
   });
   root.querySelector("#btn-click-tp").addEventListener("click", () => {

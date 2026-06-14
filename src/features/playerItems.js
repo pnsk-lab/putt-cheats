@@ -10,6 +10,9 @@ export function createPlayerItemsSection(actions) {
     <button id="btn-remove-player-item" class="primary" style="width:100%;margin-bottom:12px;font-weight:900;">REMOVE ITEM</button>
   `));
   root.querySelector("#sel-player").addEventListener("focus", () => actions.refreshPlayerItemUI?.());
+  root.querySelector("#sel-player").addEventListener("pointerdown", () => actions.refreshPlayerItemUI?.());
+  root.querySelector("#sel-player-card").addEventListener("focus", () => actions.refreshPlayerCardSelect?.());
+  root.querySelector("#sel-player-card").addEventListener("pointerdown", () => actions.refreshPlayerCardSelect?.());
   root.querySelector("#sel-player").addEventListener("change", () => actions.refreshPlayerCardSelect?.());
   root.querySelector("#btn-remove-player-item").addEventListener("click", () => {
     actions.removePlayerItem?.(
