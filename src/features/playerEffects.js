@@ -16,6 +16,7 @@ export function createPlayerEffectsSection(actions) {
   `));
   root.querySelector("#sel-effect-player").addEventListener("focus", () => actions.refreshPlayerEffectUI?.());
   root.querySelector("#sel-clear-effect-player").addEventListener("focus", () => actions.refreshPlayerEffectUI?.());
+  root.querySelector("#sel-clear-player-effect").addEventListener("focus", () => actions.refreshPlayerEffectStateSelect?.());
   root.querySelector("#sel-clear-effect-player").addEventListener("change", () => actions.refreshPlayerEffectStateSelect?.());
   root.querySelector("#btn-apply-player-effect").addEventListener("click", () => {
     actions.applyPlayerEffect?.(

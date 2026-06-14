@@ -639,28 +639,55 @@ function getEffectLabelById(effectId) {
   return `Effect_${effectId}`;
 }
 
+function getStatusEffectId(effect) {
+  return Number(effect?.effect_id ?? effect?.effectId);
+}
+
+function makeStatusEffectKey(effect, index = 0) {
+  const id = getStatusEffectId(effect);
+  const start = effect?.start_time ?? effect?.startTime ?? "";
+  const charges = effect?.charges_left ?? effect?.chargesLeft ?? "";
+  const instigator = normalizePlayerId(effect?.instigator_id ?? effect?.instigatorId) || "";
+  const targetData = effect?.target_data ?? effect?.targetData ?? {};
+  let targetKey = "";
+  try {
+    targetKey = JSON.stringify(targetData);
+  } catch (_) {
+    targetKey = String(targetData);
+  }
+  return [index, id, start, charges, instigator, targetKey].map((part) => String(part)).join("|");
+}
+
 function clearPlayerEffectStateInternal(playerId, effectSelector = "__all__", options = {}) {
   const targetId = normalizePlayerId(playerId);
   if (!targetId) return false;
   const player = getNetPlayerById(targetId);
-  const playerState = player?.state || state.players[targetId];
-  if (!playerState) return false;
+  const sourceState = player?.state || state.players[targetId];
+  if (!sourceState) return false;
+  const playerState = clonePlain(sourceState);
   const effects = Array.isArray(playerState.active_status_effects)
     ? playerState.active_status_effects
     : [];
   const selector = String(effectSelector);
+  const isKeySelector = selector.startsWith("__key__:");
+  const selectedKey = isKeySelector ? selector.slice("__key__:".length) : null;
+  if (isKeySelector && !effects.some((effect, index) => makeStatusEffectKey(effect, index) === selectedKey)) {
+    return false;
+  }
   const effectId =
-    selector === "__all__"
+    selector === "__all__" || isKeySelector
       ? null
       : Number.isFinite(Number(selector))
         ? Number(selector)
         : Number(getPlayerEffectId(selector));
+  if (selector !== "__all__" && !isKeySelector && !Number.isFinite(effectId)) return false;
   const predicate = options.predicate || (() => true);
-  const runtimeRemoved = removeRuntimeStatusEffects(targetId, selector, effectId, predicate);
+  const runtimeRemoved = removeRuntimeStatusEffects(targetId, selector, effectId, predicate, selectedKey);
   if (effects.length === 0 && runtimeRemoved === 0) return false;
-  const filtered = effects.filter((effect) => {
-    const currentId = Number(effect?.effect_id ?? effect?.effectId);
-    const idMatches = selector === "__all__" || currentId === effectId;
+  const filtered = effects.filter((effect, index) => {
+    const currentId = getStatusEffectId(effect);
+    const keyMatches = isKeySelector && makeStatusEffectKey(effect, index) === selectedKey;
+    const idMatches = selector === "__all__" || currentId === effectId || keyMatches;
     return !(idMatches && predicate(effect));
   });
   if (filtered.length === effects.length && runtimeRemoved === 0) return false;
@@ -684,10 +711,11 @@ function clearPlayerEffectStateInternal(playerId, effectSelector = "__all__", op
   return true;
 }
 
-function removeRuntimeStatusEffects(playerId, selector, effectId, predicate) {
+function removeRuntimeStatusEffects(playerId, selector, effectId, predicate, selectedKey = null) {
   const statusTarget = getCurrentMode()?.getStatusEffectTargetById?.(playerId);
   const active = statusTarget?._activeStatusEffects;
   if (!Array.isArray(active) || active.length === 0) return 0;
+  const isKeySelector = !!selectedKey;
   let removed = 0;
   for (let index = active.length - 1; index >= 0; index--) {
     const runtimeEffect = active[index];
@@ -699,7 +727,10 @@ function removeRuntimeStatusEffects(playerId, selector, effectId, predicate) {
       instigator_id: runtimeEffect?.instigator?.owner?.uid,
       target_data: runtimeEffect?.targetData,
     };
-    const idMatches = selector === "__all__" || currentId === Number(effectId);
+    const idMatches =
+      selector === "__all__" ||
+      currentId === Number(effectId) ||
+      (isKeySelector && makeStatusEffectKey(stateLike, index) === selectedKey);
     if (!idMatches || !predicate(stateLike)) continue;
     try {
       statusTarget.onStatusEffectRemoved?.(runtimeEffect, runtimeEffect.targetData);
@@ -1465,9 +1496,11 @@ function refreshPlayerItemUI() {
   );
   if (players.length === 0) {
     playerSelect.innerHTML = `<option value="" disabled selected>No players with powerups</option>`;
+    playerSelect.dataset.optionsSignature = "";
     playerSelect.disabled = true;
     if (cardSelect) {
       cardSelect.innerHTML = `<option value="" disabled selected>No powerups</option>`;
+      cardSelect.dataset.optionsSignature = "";
       cardSelect.disabled = true;
     }
     if (button) button.disabled = true;
@@ -1495,6 +1528,7 @@ function refreshPlayerCardSelect() {
   const button = document.getElementById("btn-remove-player-item");
   if (cards.length === 0) {
     cardSelect.innerHTML = `<option value="" disabled selected>No powerups</option>`;
+    cardSelect.dataset.optionsSignature = "";
     cardSelect.disabled = true;
     if (button) button.disabled = true;
     return;
@@ -1531,6 +1565,7 @@ function refreshPlayerEffectUI() {
   const players = getKnownPlayers();
   if (players.length === 0) {
     playerSelect.innerHTML = `<option value="" disabled selected>No players</option>`;
+    playerSelect.dataset.optionsSignature = "";
     playerSelect.disabled = true;
   } else {
     playerSelect.disabled = false;
@@ -1561,7 +1596,16 @@ function refreshPlayerEffectUI() {
     const playersWithEffects = getKnownPlayers().filter((player) => getPlayerActiveStatusEffects(player.id).length > 0);
     if (playersWithEffects.length === 0) {
       clearPlayerSelect.innerHTML = `<option value="" disabled selected>No applied states</option>`;
+      clearPlayerSelect.dataset.optionsSignature = "";
       clearPlayerSelect.disabled = true;
+      const clearEffectSelect = document.getElementById("sel-clear-player-effect");
+      const clearButton = document.getElementById("btn-clear-player-effect");
+      if (clearEffectSelect) {
+        clearEffectSelect.innerHTML = `<option value="" disabled selected>No applied states</option>`;
+        clearEffectSelect.dataset.optionsSignature = "";
+        clearEffectSelect.disabled = true;
+      }
+      if (clearButton) clearButton.disabled = true;
     } else {
       clearPlayerSelect.disabled = false;
       setSelectOptionsStable(
@@ -1586,6 +1630,7 @@ function refreshPlayerEffectStateSelect() {
   const effects = getPlayerActiveStatusEffects(playerId);
   if (!playerId || effects.length === 0) {
     effectSelect.innerHTML = `<option value="" disabled selected>No applied states</option>`;
+    effectSelect.dataset.optionsSignature = "";
     effectSelect.disabled = true;
     if (button) button.disabled = true;
     return;
@@ -1597,9 +1642,9 @@ function refreshPlayerEffectStateSelect() {
     [
       { value: "__all__", label: `All (${effects.length})` },
       ...effects.map((effect, index) => {
-        const id = effect.effect_id ?? effect.effectId;
+        const id = getStatusEffectId(effect);
         return {
-          value: id,
+          value: `__key__:${makeStatusEffectKey(effect, index)}`,
           label: `${getEffectLabelById(id)} (${id})`,
           attrs: `data-index="${index}"`,
         };
