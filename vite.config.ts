@@ -8,7 +8,7 @@ export default defineConfig({
       userscript: {
         name: "Putt Cheats",
         namespace: "http://tampermonkey.net/",
-        version: "0.8.0",
+        version: "0.9.0",
         description:
           "Putt Party Cheating Utilities",
         author: "kozika",

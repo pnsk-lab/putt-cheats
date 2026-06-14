@@ -169,7 +169,7 @@ export function updateStatus(message = "") {
   const suffix = message ? ` | ${message}` : "";
   status.innerText = `Pos: ${formatLocalPosition()} | Group: ${
     state.group || "?"
-  } | Queue: ${state.powerupQueue.length} | Offset: ${state.serverTimeOffset.toFixed(0)}ms${suffix}`;
+  } | Offset: ${state.serverTimeOffset.toFixed(0)}ms${suffix}`;
 }
 
 function formatLocalPosition() {
