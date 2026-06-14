@@ -94,7 +94,7 @@ export function forceCreateUI() {
   titlebar.id = "putt-titlebar";
   titlebar.style =
     "font-weight:900;margin-bottom:0.65rem;display:flex;justify-content:space-between;border-bottom:1px solid #333;padding-bottom:0.45rem;cursor:move;user-select:none;letter-spacing:0.5px;font-size:clamp(0.68rem,1.25vw,0.86rem);color:#00aaff;text-transform:uppercase;";
-  titlebar.innerHTML = `<span>Putt Cheats v0.8</span><span id="putt-min" style="cursor:pointer;padding:0 5px;color:#fff;">_</span>`;
+  titlebar.innerHTML = `<span>Putt Cheats v0.9</span><span id="putt-min" style="cursor:pointer;padding:0 5px;color:#fff;">_</span>`;
 
   const body = document.createElement("div");
   body.id = "putt-body";
