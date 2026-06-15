@@ -212,6 +212,14 @@ function handlePacket(direction, opcode, data) {
     state.localUid = id;
     state.lastKnownLocalState = clonePlain(data.state);
     markPlayableStateSeen(state.lastKnownLocalState);
+    const phase = Number(state.lastKnownLocalState?.phase);
+    if (
+      phase === PLAYER_PHASE.HoleDone ||
+      phase === PLAYER_PHASE.GameOver ||
+      phase === PLAYER_PHASE.CourseSelect
+    ) {
+      markPowerupTransitionGuard("local player finished hole");
+    }
     state.players[id] = Object.assign(
       {},
       state.players[id] || {},
@@ -635,6 +643,7 @@ function getPowerupUnsafeReason() {
   if (phase === PLAYER_PHASE.GameOver) return "game over";
   if (phase === PLAYER_PHASE.CourseSelect) return "course select";
   if (phase === PLAYER_PHASE.StartHole) return "starting hole";
+  if (phase !== PLAYER_PHASE.WaitingOnInput) return "not waiting on input";
   if (Number.isFinite(stateHole) && Number.isFinite(modeHole) && stateHole !== modeHole) {
     return "hole mismatch";
   }
