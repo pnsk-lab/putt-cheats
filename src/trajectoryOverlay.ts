@@ -74,7 +74,7 @@ function drawTrajectories() {
   const camera = getCameraNode()?.getComponent?.(window.cc?.Camera);
   if (camera) {
     const now = performance.now();
-    for (const [id, traj] of Object.entries(state.trajectories)) {
+    for (const [id, traj] of Object.entries(state.trajectories) as [string, any][]) {
       if (id === state.localUid || now - traj.updatedAt > 5000) {
         delete state.trajectories[id];
         continue;

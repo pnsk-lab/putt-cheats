@@ -6,7 +6,7 @@ import { createWorldSection } from "./features/world.js";
 import { state } from "./state.js";
 import { clamp } from "./utils.js";
 
-let actions = {};
+let actions: any = {};
 
 export function configureUI(nextActions) {
   actions = nextActions;
@@ -149,8 +149,8 @@ function removeAllExistingUI() {
   window.__puttUiContainer = null;
 }
 
-function findExistingUis() {
-  const nodes = new Set(document.querySelectorAll("#putt-ui, [data-putt-ui='cheats']"));
+function findExistingUis(): HTMLElement[] {
+  const nodes = new Set<HTMLElement>(document.querySelectorAll<HTMLElement>("#putt-ui, [data-putt-ui='cheats']"));
   document.querySelectorAll("div").forEach((node) => {
     if (
       node.style?.position === "fixed" &&

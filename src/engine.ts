@@ -327,7 +327,7 @@ function raycastCourse(ray) {
   return null;
 }
 
-function resolveRayPosition(ray, options = {}) {
+function resolveRayPosition(ray, options: any = {}) {
   if (!ray) return null;
   const hit = raycastCourse(ray);
   if (hit) {
@@ -488,7 +488,7 @@ function findPlayerInCollection(collection, targetId) {
   }
   if (typeof collection === "object") {
     return collection[targetId] ||
-      Object.values(collection).find((player) => String(player?.uid || player?.id) === targetId) ||
+      Object.values(collection).find((player: any) => String(player?.uid || player?.id) === targetId) ||
       null;
   }
   return null;

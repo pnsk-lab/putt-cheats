@@ -4,7 +4,7 @@ import monkey from "vite-plugin-monkey";
 export default defineConfig({
   plugins: [
     monkey({
-      entry: "src/main.js",
+      entry: "src/main.ts",
       userscript: {
         name: "Putt Cheats",
         namespace: "http://tampermonkey.net/",

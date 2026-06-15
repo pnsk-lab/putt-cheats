@@ -1,4 +1,4 @@
-export const state = {
+export const state: any = {
   sockets: [],
   players: {},
   playerNames: {},

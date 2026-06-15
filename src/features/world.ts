@@ -1,6 +1,6 @@
 import { htmlFragment, section } from "./dom.js";
 
-export function createWorldSection(actions, options = {}) {
+export function createWorldSection(actions, options: any = {}) {
   const root = section("WORLD");
   root.appendChild(htmlFragment(`
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;user-select:none;">
