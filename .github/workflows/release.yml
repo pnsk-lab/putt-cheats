@@ -30,6 +30,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: dist/putt.user.js
+          body: "[Click here to install it](https://github.com/pnsk-lab/putt-cheats/releases/latest/download/putt.user.js) or paste that link to ActivityUserScripts to use on Vencord"
+          append_body: true
           generate_release_notes: true
           draft: false
           prerelease: false
