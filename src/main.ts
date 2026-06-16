@@ -49,7 +49,6 @@ let lastUserListRequestedAt = 0;
 let localHealthTimer = null;
 let localStillSince = 0;
 let lastTimerWarningStopAt = 0;
-const POWERUP_TRANSITION_GUARD_MS = 4000;
 
 function decodeOpPack(data) {
   const view =
@@ -96,16 +95,6 @@ function sendFrame(opcode, data, status = 0) {
 }
 
 function sendGameCmd(cmd, payload) {
-  if (cmd === GAME_CMD.ApplyStatusEffectToPlayer && isPowerupUseUnsafe()) {
-    const reason = getPowerupUnsafeReason();
-    log("[putt:WARN] blocked powerup/status effect during unstable state", {
-      reason,
-      cmd,
-      payload,
-    });
-    updateStatus(`Powerup blocked: ${reason}`);
-    return false;
-  }
   const envelope: any = { cmd, data: payload };
   if (state.group) envelope.group = state.group;
   return sendFrame(OPCODES.GameEventSend, envelope);
@@ -218,7 +207,7 @@ function handlePacket(direction, opcode, data) {
       phase === PLAYER_PHASE.GameOver ||
       phase === PLAYER_PHASE.CourseSelect
     ) {
-      markPowerupTransitionGuard("local player finished hole");
+      clearPowerupQueue();
     }
     state.players[id] = Object.assign(
       {},
@@ -267,7 +256,6 @@ function handlePacket(direction, opcode, data) {
     }
   }
   if (opcode === OPCODES.GameEventRecv && data.cmd === GAME_CMD.StartNewHole) {
-    markPowerupTransitionGuard("starting new hole");
     state.deletedPlaceableKeys.clear();
     state.spawnedBumpers = [];
     state.trajectories = {};
@@ -315,7 +303,6 @@ function syncRoundState(gameState) {
   const currentHole = Number(gameState.current_hole ?? gameState.currentHole);
   const roundState = Number(gameState.round_state ?? gameState.roundState);
   if (Number.isFinite(currentHole) && currentHole !== state.lastKnownRoundHole) {
-    markPowerupTransitionGuard("hole changed");
     state.deletedPlaceableKeys.clear();
     state.spawnedBumpers = [];
     state.trajectories = {};
@@ -326,7 +313,6 @@ function syncRoundState(gameState) {
   }
   if (Number.isFinite(roundState)) {
     if (state.lastKnownRoundState !== null && state.lastKnownRoundState !== roundState) {
-      markPowerupTransitionGuard("round state changed");
       clearPowerupQueue();
       scrubLocalRuntimeArtifacts({ clearRewind: true, stopTimerWarnings: roundState !== GAME_STATE.Play });
       if (roundState === GAME_STATE.Play) recoverLocalStateForCurrentHole({ force: true });
@@ -619,64 +605,6 @@ function markPlayableStateSeen(playerState) {
   }
 }
 
-function markPowerupTransitionGuard(reason, duration = POWERUP_TRANSITION_GUARD_MS) {
-  state.powerupGuardUntil = Math.max(state.powerupGuardUntil || 0, Date.now() + duration);
-  state.powerupGuardReason = reason;
-  setGameCardsEnabled(false);
-}
-
-function getPowerupUnsafeReason() {
-  const local = getLocalNetPlayer();
-  const mode = getCurrentMode();
-  const phase = Number(local?.state?.phase ?? state.lastKnownLocalState?.phase);
-  const visual = local?.localState?.visual;
-  const roundState = Number(mode?.gameState ?? mode?._currentState ?? state.lastKnownRoundState);
-  const stateHole = Number(local?.state?.hole ?? state.lastKnownLocalState?.hole);
-  const modeHole = Number(mode?.currentHole ?? mode?._currentHole ?? state.lastKnownRoundHole);
-
-  if (!local?.state || !mode) return "game not ready";
-  if (Date.now() < Number(state.powerupGuardUntil || 0)) {
-    return state.powerupGuardReason || "transition guard";
-  }
-  if (roundState !== GAME_STATE.Play) return "not in play";
-  if (phase === PLAYER_PHASE.HoleDone) return "hole done";
-  if (phase === PLAYER_PHASE.GameOver) return "game over";
-  if (phase === PLAYER_PHASE.CourseSelect) return "course select";
-  if (phase === PLAYER_PHASE.StartHole) return "starting hole";
-  if (phase !== PLAYER_PHASE.WaitingOnInput) return "not waiting on input";
-  if (Number.isFinite(stateHole) && Number.isFinite(modeHole) && stateHole !== modeHole) {
-    return "hole mismatch";
-  }
-  if (mode._loading || mode._advancingHole >= 0 || mode._selectingCourse) return "course transition";
-  if (!visual || !visual.node?.isValid) return "ball visual not ready";
-  if (visual?.inHole) return "ball in hole";
-  if (local.state?.is_showing_card_selection) return "card selection";
-  if (visual?.controlsEnabled === false && phase !== PLAYER_PHASE.WaitingOnInput) {
-    return "controls disabled";
-  }
-  return "";
-}
-
-function isPowerupUseUnsafe() {
-  return Boolean(getPowerupUnsafeReason());
-}
-
-function refreshPowerupSafety() {
-  const unsafeReason = getPowerupUnsafeReason();
-  setGameCardsEnabled(!unsafeReason);
-  return unsafeReason;
-}
-
-function setGameCardsEnabled(enabled) {
-  const manager = getCurrentMode()?.powerupManager;
-  try {
-    if (enabled) manager?.enableCards?.();
-    else manager?.disableCards?.();
-  } catch (e) {
-    log("[putt:WARN] failed to update powerup card safety", e);
-  }
-}
-
 function isRewindName(name) {
   return String(name || "").toLowerCase() === "rewind";
 }
@@ -700,14 +628,6 @@ function canApplyRewindToPlayer(playerId) {
   if (activeEffects.some((effect) => Number(effect?.effect_id) === Number(rewindEffectId))) {
     return { ok: false, reason: "rewind is already active" };
   }
-  return { ok: true };
-}
-
-function canAddRewindPowerup() {
-  if (!state.localUid) return { ok: false, reason: "local player is not ready" };
-  const result = canApplyRewindToPlayer(state.localUid);
-  if (!result.ok) return result;
-  if (!canPatchLocalCardsNow()) return { ok: false, reason: "local input phase is not ready" };
   return { ok: true };
 }
 
@@ -1021,7 +941,6 @@ function repairLocalHealthTick() {
   const mode = getCurrentMode();
   const local = getLocalNetPlayer();
   if (!mode || !local?.state) return;
-  refreshPowerupSafety();
   const phase = Number(local.state.phase);
   const visual = local.localState?.visual;
   if (visual?.inHole && phase !== PLAYER_PHASE.HoleDone && phase !== PLAYER_PHASE.GameOver) {
@@ -1454,8 +1373,6 @@ window.puttCheats = {
 
   addPowerup(name) {
     window.puttCheats.syncFromGame();
-    const unsafeReason = getPowerupUnsafeReason();
-    if (unsafeReason) return alert(`Powerups are unsafe now: ${unsafeReason}.`);
     if (Object.keys(state.powerupMapping).length === 0) {
       detectPowerupIds({ silent: true });
     }
@@ -1470,8 +1387,6 @@ window.puttCheats = {
   removePlayerItem(playerId, powerupId) {
     window.puttCheats.syncFromGame();
     if (!canSend()) return alert("Wait for socket.");
-    const unsafeReason = getPowerupUnsafeReason();
-    if (unsafeReason) return alert(`Powerups are unsafe now: ${unsafeReason}.`);
     const targetId = String(playerId || "");
     if (!targetId || !powerupId) {
       return alert("Select player and power up.");
@@ -1511,8 +1426,6 @@ window.puttCheats = {
   applyPlayerEffect(playerId, effectName) {
     window.puttCheats.syncFromGame();
     if (!canSend()) return alert("Wait for socket.");
-    const unsafeReason = getPowerupUnsafeReason();
-    if (unsafeReason) return alert(`Powerups are unsafe now: ${unsafeReason}.`);
     const targetId = String(playerId || "");
     if (!targetId || !effectName) return alert("Select player and effect.");
     if (isRewindName(effectName)) {
@@ -1542,8 +1455,6 @@ window.puttCheats = {
   putBumperAt(pos) {
     window.puttCheats.syncFromGame();
     if (!canSend()) return alert("Wait for socket.");
-    const unsafeReason = getPowerupUnsafeReason();
-    if (unsafeReason) return alert(`Powerups are unsafe now: ${unsafeReason}.`);
     const effectId = getSpawnBumperEffectId();
     if (effectId === null || effectId === undefined) {
       return alert("Spawn bumper status effect id not found yet. Wait for the game to finish loading.");
@@ -1755,7 +1666,7 @@ window.puttCheats = {
           }
         : null,
       players,
-      canPatchLocalCardsNow: canPatchLocalCardsNow(),
+      hasLocalCardState: hasLocalCardState(),
       canApplyRewindEffect: state.localUid
         ? canApplyRewindToPlayer(state.localUid)
         : { ok: false, reason: "local player is not ready" },
@@ -2041,7 +1952,7 @@ function getPowerupCount() {
 function enqueuePowerups(ids, replaceVisible) {
   ids = sanitizeQueuedPowerups(ids);
   if (ids.length === 0) return false;
-  if (!canPatchLocalCardsNow()) {
+  if (!hasLocalCardState()) {
     if (replaceVisible) state.powerupQueue = [];
     state.powerupQueue.push(...ids);
     startPowerupRefillLoop();
@@ -2070,7 +1981,7 @@ function refillPowerupSlots() {
   if (!state.localUid || !state.lastKnownLocalState || state.powerupQueue.length === 0) {
     return false;
   }
-  if (!canPatchLocalCardsNow()) return false;
+  if (!hasLocalCardState()) return false;
   state.powerupQueue = sanitizeQueuedPowerups(state.powerupQueue);
   if (state.powerupQueue.length === 0) return false;
   const max = getMaxHandSize();
@@ -2087,16 +1998,8 @@ function refillPowerupSlots() {
   return true;
 }
 
-function canPatchLocalCardsNow() {
-  if (isPowerupUseUnsafe()) return false;
-  const local = getLocalNetPlayer();
-  const phase = Number(local?.state?.phase ?? state.lastKnownLocalState?.phase);
-  const visual = local?.localState?.visual;
-  if (phase !== PLAYER_PHASE.WaitingOnInput) return false;
-  if (local?.state?.is_showing_card_selection) return false;
-  if (visual?.inHole || visual?._rewindActive || visual?.rewindActive) return false;
-  if (visual && visual.controlsEnabled === false) return false;
-  return true;
+function hasLocalCardState() {
+  return Boolean(state.localUid && (getLocalNetPlayer()?.state || state.lastKnownLocalState));
 }
 
 function sanitizeQueuedPowerups(ids) {
