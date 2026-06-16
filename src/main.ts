@@ -37,9 +37,16 @@ import {
   configureUI,
   createUI,
   forceCreateUI,
+  refreshModuleBoard,
+  toggleUI,
   updateStatus,
 } from "./ui.js";
 import { clonePlain, escapeAttr, escapeHtml } from "./utils.js";
+import { keybindManager } from "./keybind/KeybindManager.js";
+import { moduleManager } from "./modules/ModuleManager.js";
+import { registerBuiltinModules } from "./modules/registerBuiltinModules.js";
+import { installSystemHook } from "./game/cocosBoot.js";
+import { createPuttActions } from "./actions/createPuttActions.js";
 
 let powerupDetectionTimer = null;
 let uiObserver = null;
@@ -754,7 +761,7 @@ function removeRuntimeStatusEffects(playerId, selector, effectId, predicate, sel
 }
 
 function clearLocalPlayerState(options: any = {}) {
-  window.puttCheats.syncFromGame();
+  puttActions.syncFromGame();
   const localId = state.localUid;
   if (!localId) {
     if (!options.silent) alert("Local player is not ready.");
@@ -1226,66 +1233,6 @@ function installWebSocketHook() {
   Object.setPrototypeOf(window.WebSocket, NativeWebSocket);
 }
 
-function installSystemHook() {
-  if (state.systemHookInstalled) return;
-  state.systemHookInstalled = true;
-
-  const wrapSystem = (system) => {
-    if (!system || system.__puttSystemHooked || typeof system.import !== "function") {
-      return system;
-    }
-    system.__puttSystemHooked = true;
-    const nativeImport = system.import.bind(system);
-    system.import = function patchedSystemImport(specifier, ...args) {
-      const result = nativeImport(specifier, ...args);
-      if (specifier === "cc") {
-        result.then((engine) => {
-          hookCocosBoot(engine);
-        });
-      }
-      return result;
-    };
-    return system;
-  };
-
-  if (window.System) {
-    wrapSystem(window.System);
-    if (window.cc?.game) hookCocosBoot(window.cc);
-    return;
-  }
-
-  let systemValue;
-  Object.defineProperty(window, "System", {
-    configurable: true,
-    get() {
-      return systemValue;
-    },
-    set(value) {
-      systemValue = wrapSystem(value);
-      if (window.cc?.game) hookCocosBoot(window.cc);
-    },
-  });
-}
-
-function hookCocosBoot(engine) {
-  if (!engine?.game || engine.game.__puttBootHooked) return;
-  engine.game.__puttBootHooked = true;
-  const show = () => {
-    window.cc = window.cc || engine;
-    createUI();
-    schedulePowerupIdDetection();
-    startLocalHealthWatchdog();
-    updateStatus();
-  };
-  try {
-    engine.game.onPostSubsystemInitDelegate?.add?.(show);
-    engine.game.onPostBaseInitDelegate?.add?.(show);
-  } catch (e) {
-    log("[putt:WARN] failed to hook cocos boot", e);
-  }
-  if (document.body && engine.director) show();
-}
-
 function ensureUiOnDomReady() {
   if (maybeCreateUiForGameDocument()) {
     return;
@@ -1337,375 +1284,63 @@ function schedulePowerupIdDetection(attemptsLeft = 20) {
   }, 500);
 }
 
-window.puttCheats = {
-  teleport(x, y, z) {
-    if (!state.localUid || !state.lastKnownLocalState) {
-      return alert("Wait for game start.");
-    }
-    const pos = { x: parseFloat(x), y: parseFloat(y), z: parseFloat(z) };
-    if (![pos.x, pos.y, pos.z].every(Number.isFinite)) {
-      return alert("Invalid coordinates.");
-    }
-
-    const visual = getLocalBallVisual();
-    if (visual?.node) {
-      try {
-        visual.node.setWorldPosition(pos.x, pos.y, pos.z);
-        visual.rigidbody?.clearVelocity?.();
-        visual.rigidbody?.clearForces?.();
-      } catch (e) {
-        log("[putt:WARN] failed to snap local ball", e);
-      }
-    } else {
-      const ball = findNodeByName(window.cc?.director?.getScene(), "Ball_Local");
-      if (ball) ball.setWorldPosition(pos.x, pos.y, pos.z);
-    }
-
-    patchLocalState({ pos, vel: { x: 0, y: 0, z: 0 } });
-    sendGameCmd(GAME_CMD.BallCorrection, {
-      id: state.localUid,
-      pos,
-      vel: { x: 0, y: 0, z: 0 },
-      time: getServerTimeNow(),
-    });
-    sendGameCmd(GAME_CMD.BallStopped, { id: state.localUid, pos });
-  },
-
-  addPowerup(name) {
-    window.puttCheats.syncFromGame();
-    if (Object.keys(state.powerupMapping).length === 0) {
-      detectPowerupIds({ silent: true });
-    }
-    const id = state.powerupMapping[name];
-    if (id === undefined || !state.lastKnownLocalState) {
-      return alert("Detect IDs first.");
-    }
-    const count = getPowerupCount();
-    enqueuePowerups(Array(count).fill(id), false);
-  },
-
-  removePlayerItem(playerId, powerupId) {
-    window.puttCheats.syncFromGame();
-    if (!canSend()) return alert("Wait for socket.");
-    const targetId = String(playerId || "");
-    if (!targetId || !powerupId) {
-      return alert("Select player and power up.");
-    }
-    if (targetId === state.localUid) {
-      return alert("Local player is excluded from remove item.");
-    }
-    const cards = Array.isArray(state.players[targetId]?.cards_in_hand)
-      ? state.players[targetId].cards_in_hand.slice()
-      : [];
-    const cardIds =
-      powerupId === "__all__"
-        ? cards
-        : [Number.parseInt(powerupId, 10)].filter(Number.isFinite);
-    if (cardIds.length === 0) return alert("Selected player has no powerups.");
-    const effectId = getStealEffectId();
-    if (effectId === null || effectId === undefined) {
-      return alert("Steal status effect id not found yet. Wait for the game to finish loading.");
-    }
-    cardIds.forEach((cardId) => {
-      sendGameCmd(GAME_CMD.ApplyStatusEffectToPlayer, {
-        // Use the target as instigator so local steal handling does not add the card to us.
-        id: targetId,
-        effectId,
-        targetData: {
-          targetId,
-          powerup_to_steal_id: cardId,
-        },
-      });
-      removeCachedPlayerCard(targetId, cardId);
-    });
-    refreshPlayerItemUI({ skipSync: true });
-    log("[putt:INFO] remove player item sent", { targetId, cardIds, effectId });
-    return true;
-  },
-
-  applyPlayerEffect(playerId, effectName) {
-    window.puttCheats.syncFromGame();
-    if (!canSend()) return alert("Wait for socket.");
-    const targetId = String(playerId || "");
-    if (!targetId || !effectName) return alert("Select player and effect.");
-    if (isRewindName(effectName)) {
-      const rewind = canApplyRewindToPlayer(targetId);
-      if (!rewind.ok) return alert(`Rewind is not safe now: ${rewind.reason}.`);
-    }
-    const effectId = getPlayerEffectId(effectName);
-    if (effectId === null || effectId === undefined) {
-      return alert(`Effect id not found yet: ${effectName}. Wait for the game to finish loading.`);
-    }
-    const targetData = { targetId };
-    const instigatorId = state.localUid || targetId;
-    sendGameCmd(GAME_CMD.ApplyStatusEffectToPlayer, {
-      id: instigatorId,
-      effectId,
-      targetData,
-    });
-    applyPlayerEffectLocally(targetId, effectId, instigatorId, targetData);
-    log("[putt:INFO] player effect sent", { targetId, effectName, effectId, targetData });
-    return true;
-  },
-
-  clearPlayerEffectState() {
-    return clearLocalPlayerState();
-  },
-
-  putBumperAt(pos) {
-    window.puttCheats.syncFromGame();
-    if (!canSend()) return alert("Wait for socket.");
-    const effectId = getSpawnBumperEffectId();
-    if (effectId === null || effectId === undefined) {
-      return alert("Spawn bumper status effect id not found yet. Wait for the game to finish loading.");
-    }
-    const mode = getCurrentMode();
-    const targetId = mode?.uid;
-    if (!targetId) return alert("Game mode target is not ready.");
-    const position = normalizeVec3(pos);
-    if (!position) return alert("Invalid bumper position.");
-    const targetData = {
-      targetId,
-      id: `putt-bumper-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
-      position,
-      dir: { x: 0, y: 0, z: 1 },
-      up: { x: 0, y: 1, z: 0 },
-    };
-    sendGameCmd(GAME_CMD.ApplyStatusEffectToPlayer, {
-      id: state.localUid || targetId,
-      effectId,
-      targetData,
-    });
-    recordSpawnedBumper(targetData);
-    applyStatusEffectStateLocally(effectId, state.localUid || targetId, targetData);
-    log("[putt:INFO] put bumper sent", { effectId, targetData });
-    return true;
-  },
-
-  armPutBumper() {
-    state.putBumperArmed = true;
-    return armCanvasClick("Move cursor and click course", (pos) => {
-      if (!state.putBumperArmed) return;
-      state.putBumperArmed = false;
-      window.puttCheats.putBumperAt(pos);
-    }, () => {
-      state.putBumperArmed = false;
-    });
-  },
-
-  armTeleportFill(callback) {
-    return armCanvasClick("Move cursor and click teleport target", (pos) => {
-      if (typeof callback === "function") callback(pos);
-    }, null, getTeleportPositionFromCanvasClick);
-  },
-
-  deleteNearest() {
-    if (!canSend()) return alert("Wait for socket.");
-    const scene = window.cc?.director?.getScene();
-    if (!scene || !window.cc) return alert("Scene is not ready.");
-    const localBall = getLocalBallVisual()?.node || findNodeByName(scene, "Ball_Local");
-    const origin = localBall?.worldPosition || getCurrentCameraNode()?.worldPosition;
-    if (!origin) return alert("Local ball/camera not found.");
-    let nearest = null;
-    let minDist = Infinity;
-    const seen = new Set();
-    const addedBumper = getNearestAddedBumper(origin);
-    if (addedBumper) {
-      nearest = addedBumper;
-      minDist = addedBumper.dist;
-    }
-    walkScene(scene, (node) => {
-      const candidate = getDeleteCandidate(node);
-      if (candidate && !seen.has(candidate)) {
-        seen.add(candidate);
-        const dist = distance3(candidate.worldPosition, origin);
-        if (dist < minDist) {
-          minDist = dist;
-          nearest = { type: "node", name: candidate.name, key: getPlaceableKey(candidate), node: candidate };
-        }
-      }
-      return false;
-    });
-    if (nearest) {
-      const key = nearest.key;
-      if (!key) {
-        log("[putt:WARN] nearest deletable has no key", nearest.name, nearest.node || nearest);
-        return;
-      }
-      sendGameCmd(GAME_CMD.MarkPlaceableDestroyed, {
-        key,
-      });
-      try {
-        // Keep this scoped to the exact candidate node. Climbing to parents can hide entire course groups.
-        if (nearest.node) nearest.node.active = false;
-      } catch (e) {
-        log("[putt:WARN] failed to delete nearest", e);
-      }
-      state.deletedPlaceableKeys.add(key);
-      state.spawnedBumpers = state.spawnedBumpers.filter((bumper) => bumper.key !== key);
-      removeSpawnedBumperEffectState(key);
-      log("[putt:INFO] deleted nearest", nearest.name, key, minDist);
-    } else {
-      log("[putt:WARN] no deletable object found");
-    }
-  },
-
-  syncFromGame() {
-    updatePlayerStatesFromGame();
-    const local = getLocalNetPlayer();
-    const localId = normalizePlayerId(local?.uid || local?.id);
-    if (localId) state.localUid = localId;
-    if (localId && local?.state) {
-      state.players[localId] = clonePlain(local.state);
-      state.lastKnownLocalState = clonePlain(local.state);
-      markPlayableStateSeen(state.lastKnownLocalState);
-    }
-    const gm = getGameManager();
-    const client = gm?._netGame?._client;
-    updateLocalIdentityFromGame(gm, client);
-    requestUserListSoon(0);
-    return { uid: state.localUid, group: state.group, state: state.lastKnownLocalState };
-  },
-
-  showUI() {
-    state.uiReady = false;
-    return forceCreateUI();
-  },
-
-  refillPowerups() {
-    return refillPowerupSlots();
-  },
-
-  listDeletables() {
-    const scene = window.cc?.director?.getScene();
-    const out = [];
-    const seen = new Set();
-    walkScene(scene, (node) => {
-      const candidate = getDeleteCandidate(node);
-      if (candidate && !seen.has(candidate)) {
-        seen.add(candidate);
-        const key = getPlaceableKey(candidate);
-        out.push({
-          name: candidate.name,
-          node: candidate,
-          key,
-          pos: candidate.position?.toString?.(),
-          worldPos: candidate.worldPosition?.toString?.(),
-          children: candidate.children?.length || 0,
-        });
-      }
-      return false;
-    });
-    state.spawnedBumpers.forEach((bumper) => {
-      if (!bumper?.key || state.deletedPlaceableKeys.has(bumper.key)) return;
-      out.push({
-        name: "SpawnedBumper",
-        key: bumper.key,
-        pos: formatPlaceablePositionKey(bumper.position),
-        worldPos: formatPlaceablePositionKey(bumper.position),
-        children: 0,
-        virtual: true,
-      });
-    });
-    log("[putt:INFO] deletables", out);
-    return out;
-  },
-
-  debugSnapshot() {
-    window.puttCheats.syncFromGame();
-    const gm = getGameManager();
-    const mode = getCurrentMode();
-    const local = getLocalNetPlayer();
-    const visual = local?.localState?.visual;
-    const players = getKnownPlayers().map((player) => ({
-      id: player.id,
-      name: state.playerNames[player.id] || null,
-      phase: player.state?.phase,
-      hole: player.state?.hole,
-      strokes: player.state?.strokes,
-      cards: Array.isArray(player.state?.cards_in_hand) ? player.state.cards_in_hand.slice() : [],
-      activeStatusEffects: Array.isArray(player.state?.active_status_effects)
-        ? player.state.active_status_effects.map((effect) => ({
-            effectId: effect.effect_id ?? effect.effectId,
-            chargesLeft: effect.charges_left ?? effect.chargesLeft,
-            targetData: effect.target_data ?? effect.targetData,
-          }))
-        : [],
-    }));
-    return {
-      localUid: state.localUid,
-      group: state.group,
-      queue: state.powerupQueue.slice(),
-      lastKnownRoundHole: state.lastKnownRoundHole,
-      lastKnownRoundState: state.lastKnownRoundState,
-      deletedPlaceableKeys: Array.from(state.deletedPlaceableKeys),
-      spawnedBumpers: state.spawnedBumpers.slice(),
-      game: {
-        hasGameManager: !!gm,
-        hasMode: !!mode,
-        gameState: mode?.gameState ?? mode?._currentState,
-        currentHole: mode?.currentHole ?? mode?._currentHole,
-        maxHoles: mode?.maxHoles ?? mode?.holesPerGame,
-        isPrimary: mode?.IsPrimaryUser?.() ?? gm?._netGame?.isPrimaryUser?.(),
-      },
-      local: local
-        ? {
-            uid: local.uid || local.id,
-            state: clonePlain(local.state),
-            visual: visual
-              ? {
-                  state: visual.state,
-                  controlsEnabled: visual.controlsEnabled,
-                  inHole: visual.inHole,
-                  inHoleName: visual.inHoleName,
-                  hasReversePath: visual.hasReversePath?.(),
-                  rewindActive: visual.rewindActive ?? visual._rewindActive,
-                  worldPosition: clonePlain(visual.node?.worldPosition),
-                }
-              : null,
-          }
-        : null,
-      players,
-      hasLocalCardState: hasLocalCardState(),
-      canApplyRewindEffect: state.localUid
-        ? canApplyRewindToPlayer(state.localUid)
-        : { ok: false, reason: "local player is not ready" },
-      teleportBaseY: getTeleportBaseY(),
-      lastTeleportClickDebug: state.lastTeleportClickDebug || null,
-    };
-  },
-
-  repairLocalState() {
-    window.puttCheats.syncFromGame();
-    const local = getLocalNetPlayer();
-    if (!state.localUid || !local?.state) {
-      alert("Local player is not ready.");
-      return false;
-    }
-
-    const recoveredHoleState = recoverLocalStateForCurrentHole({ force: false });
-    const clearedRuntimeState = clearLocalPlayerState({ silent: true });
-    const refreshedLocal = getLocalNetPlayer();
-
-    if (refreshedLocal?.state && state.localUid) {
-      if (Number(refreshedLocal.state.phase) === PLAYER_PHASE.Simulating && isLocalBallNearlyStopped()) {
-        forceLocalBallStopped("manual resync");
-      } else {
-        setLocalState(clonePlain(refreshedLocal.state));
-      }
-    }
-
-    refreshPlayerItemUI({ skipSync: true });
-    refreshPlayerEffectUI();
-    updateStatus(recoveredHoleState ? "Resynced state + hole" : "Resynced state");
-    log("[putt:INFO] repaired local state", {
-      localId: state.localUid,
-      recoveredHoleState,
-      clearedRuntimeState,
-    });
-    return true;
-  },
-};
+const puttActions = createPuttActions({
+  state,
+  log,
+  moduleManager,
+  canSend,
+  getServerTimeNow,
+  patchLocalState,
+  sendGameCmd,
+  detectPowerupIds,
+  getPowerupCount,
+  enqueuePowerups,
+  getStealEffectId,
+  removeCachedPlayerCard,
+  refreshPlayerItemUI,
+  isRewindName,
+  canApplyRewindToPlayer,
+  getPlayerEffectId,
+  applyPlayerEffectLocally,
+  clearLocalPlayerState,
+  getSpawnBumperEffectId,
+  getCurrentMode,
+  normalizeVec3,
+  recordSpawnedBumper,
+  applyStatusEffectStateLocally,
+  armCanvasClick,
+  getTeleportPositionFromCanvasClick,
+  getLocalBallVisual,
+  findNodeByName,
+  getCurrentCameraNode,
+  getDeleteCandidate,
+  getPlaceableKey,
+  distance3,
+  getNearestAddedBumper,
+  removeSpawnedBumperEffectState,
+  walkScene,
+  updatePlayerStatesFromGame,
+  getLocalNetPlayer,
+  normalizePlayerId,
+  clonePlain,
+  markPlayableStateSeen,
+  getGameManager,
+  updateLocalIdentityFromGame,
+  requestUserListSoon,
+  forceCreateUI,
+  refillPowerupSlots,
+  formatPlaceablePositionKey,
+  getKnownPlayers,
+  hasLocalCardState,
+  getTeleportBaseY,
+  recoverLocalStateForCurrentHole,
+  isLocalBallNearlyStopped,
+  forceLocalBallStopped,
+  setLocalState,
+  refreshPlayerEffectUI,
+  updateStatus,
+});
+window.puttCheats = puttActions;
 
 function detectPowerupIds(options: any = {}) {
   const scene = window.cc?.director?.getScene();
@@ -1751,7 +1386,7 @@ function refreshPlayerItemUI(options: any = {}) {
   if (!options.skipSync) {
     refreshingPlayerUi = true;
     try {
-      window.puttCheats.syncFromGame();
+      puttActions.syncFromGame();
     } finally {
       refreshingPlayerUi = false;
     }
@@ -1824,7 +1459,7 @@ function refreshPlayerEffectUI() {
   if (!playerSelect || !effectSelect) return;
   refreshingPlayerUi = true;
   try {
-    window.puttCheats.syncFromGame();
+    puttActions.syncFromGame();
   } finally {
     refreshingPlayerUi = false;
   }
@@ -2029,7 +1664,7 @@ function startPowerupRefillLoop() {
       state.powerupRefillTimer = null;
       return;
     }
-    window.puttCheats.syncFromGame();
+    puttActions.syncFromGame();
     refillPowerupSlots();
   }, 500);
 }
@@ -2059,25 +1694,63 @@ configureTrajectoryOverlay({
   getCameraNode: getCurrentCameraNode,
 });
 
+function teleportToGoal() {
+  const goal = getGoalPosition();
+  if (!goal) return alert("Goal not found.");
+  return puttActions.teleport(goal.x, Number(goal.y) + 15, goal.z);
+}
+
+function armClickTeleport() {
+  return puttActions.armTeleportFill((pos) => {
+    puttActions.teleport(pos.x, pos.y, pos.z);
+  });
+}
+
+registerBuiltinModules(moduleManager, {
+  toggleUI,
+  teleportToGoal,
+  armTeleportFill: armClickTeleport,
+  addPowerup: (name) => puttActions.addPowerup(name),
+  refillPowerups: () => puttActions.refillPowerups(),
+  repairLocalState: () => puttActions.repairLocalState(),
+  clearPlayerEffectState: () => puttActions.clearPlayerEffectState(),
+  armPutBumper: () => puttActions.armPutBumper(),
+  deleteNearest: () => puttActions.deleteNearest(),
+  setTrajectoriesEnabled,
+  updateStatus,
+});
+
+keybindManager.install();
+(window as any).puttModules = moduleManager;
+(window as any).puttKeybinds = keybindManager;
+
 configureUI({
-  teleport: (...args) => window.puttCheats.teleport(...args),
-  armTeleportFill: (...args) => window.puttCheats.armTeleportFill(...args),
+  teleport: (...args) => puttActions.teleport(...args),
+  armTeleportFill: (...args) => puttActions.armTeleportFill(...args),
   getGoalPosition,
   detectPowerupIds,
-  addPowerup: (name) => window.puttCheats.addPowerup(name),
+  addPowerup: (name) => puttActions.addPowerup(name),
   refreshPlayerItemUI,
   refreshPlayerCardSelect,
-  removePlayerItem: (...args) => window.puttCheats.removePlayerItem(...args),
+  removePlayerItem: (...args) => puttActions.removePlayerItem(...args),
   refreshPlayerEffectUI,
   refreshPlayerEffectStateSelect,
-  applyPlayerEffect: (...args) => window.puttCheats.applyPlayerEffect(...args),
-  clearPlayerEffectState: (...args) => window.puttCheats.clearPlayerEffectState(...args),
-  armPutBumper: () => window.puttCheats.armPutBumper(),
+  applyPlayerEffect: (...args) => puttActions.applyPlayerEffect(...args),
+  clearPlayerEffectState: (...args) => puttActions.clearPlayerEffectState(...args),
+  armPutBumper: () => puttActions.armPutBumper(),
   setTrajectoriesEnabled,
-  repairLocalState: (...args) => window.puttCheats.repairLocalState(...args),
-  deleteNearest: () => window.puttCheats.deleteNearest(),
+  repairLocalState: (...args) => puttActions.repairLocalState(...args),
+  deleteNearest: () => puttActions.deleteNearest(),
+  getModules: () => moduleManager.getAll(),
+  invokeModule: (id) => moduleManager.invoke(id),
+  refreshModuleBoard,
 });
 
 ensureUiOnDomReady();
 installWebSocketHook();
-installSystemHook();
+installSystemHook(() => {
+  createUI();
+  schedulePowerupIdDetection();
+  startLocalHealthWatchdog();
+  updateStatus();
+});

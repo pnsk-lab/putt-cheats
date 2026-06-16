@@ -29,6 +29,8 @@ export const state: any = {
   powerupRefillTimer: null,
   spawnedBumpers: [],
   deletedPlaceableKeys: new Set(),
+  removeFatassesEnabled: false,
+  removeFatassesOriginalScales: new Map(),
 };
 
 export const log = console.log.bind(console);

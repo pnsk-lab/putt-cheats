@@ -9,7 +9,8 @@ export function createWorldSection(actions, options: any = {}) {
     </label>
     <button id="btn-resync-state" style="width:100%;margin-bottom:4px;">Resync State</button>
     <button id="btn-put-bumper" style="width:100%;margin-bottom:4px;">Place Bumper</button>
-    <button id="btn-del-n" style="width:100%;">Delete Nearest Object</button>
+    <button id="btn-del-n" style="width:100%;margin-bottom:4px;">Delete Nearest Object</button>
+    <button id="btn-fatasses" style="width:100%;">Remove Fatasses</button>
   `));
   const trajectories = root.querySelector("#chk-traj");
   trajectories.checked = Boolean(options.getTrajectoriesEnabled?.());
@@ -23,6 +24,11 @@ export function createWorldSection(actions, options: any = {}) {
   root.querySelector("#btn-put-bumper").addEventListener("click", () => actions.armPutBumper?.());
   root.querySelector("#btn-del-n").addEventListener("click", () => {
     actions.deleteNearest?.();
+    options.updateStatus?.();
+  });
+  root.querySelector("#btn-fatasses").addEventListener("click", () => {
+    actions.invokeModule?.("remove-fatasses");
+    actions.refreshModuleBoard?.();
     options.updateStatus?.();
   });
   return root;

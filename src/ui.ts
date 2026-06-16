@@ -31,40 +31,40 @@ export function forceCreateUI() {
   container.id = "putt-ui";
   container.dataset.puttUi = "cheats";
   container.style =
-    "position:fixed;top:1.5vh;left:1.5vw;z-index:2147483647;background:rgba(20,20,20,0.98);color:#ffffff;padding:clamp(0.34rem,0.95vw,0.62rem);border-radius:0.4rem;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:clamp(0.54rem,0.92vw,0.7rem);width:clamp(12rem,20vw,17rem);max-width:calc(100vw - 1rem);box-sizing:border-box;overflow:hidden;border:1px solid #333;box-shadow:0 0.5rem 2rem rgba(0,0,0,0.6);line-height:1.2;transform-origin:top left;";
+    "position:fixed;top:1.5vh;left:1.5vw;z-index:2147483647;background:#17191c;color:#f5f7fb;padding:0;border-radius:0.45rem;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;font-size:clamp(0.54rem,0.92vw,0.7rem);width:clamp(18rem,30vw,25rem);max-width:calc(100vw - 1rem);box-sizing:border-box;overflow:hidden;border:1px solid #343942;box-shadow:0 0.8rem 2.4rem rgba(0,0,0,0.58);line-height:1.2;transform-origin:top left;";
 
   const style = document.createElement("style");
   style.textContent = `
     #putt-ui button, #putt-ui input, #putt-ui select {
-      background: #2a2a2a !important;
-      color: #fff !important;
-      border: 1px solid #444 !important;
+      background: #242830 !important;
+      color: #f5f7fb !important;
+      border: 1px solid #3b424d !important;
       font-family: inherit !important;
       font-size: clamp(0.52rem, 0.86vw, 0.66rem) !important;
-      padding: 0.24em 0.38em !important;
+      padding: 0.36em 0.48em !important;
       margin: 0.04rem 0;
-      border-radius: 0.22rem;
+      border-radius: 0.28rem;
       cursor: pointer;
       outline: none;
       transition: all 0.1s;
     }
     #putt-ui button:hover {
-      background: #3a3a3a !important;
-      border-color: #00aaff !important;
+      background: #303743 !important;
+      border-color: #5cc8ff !important;
     }
     #putt-ui button:active {
-      background: #00aaff !important;
+      background: #1976a9 !important;
       color: #fff !important;
     }
     #putt-ui button.primary {
-      background: #00aaff !important;
+      background: #1976a9 !important;
       color: #fff !important;
-      border-color: #00aaff !important;
+      border-color: #2b9cd4 !important;
       text-transform: uppercase;
     }
     #putt-ui button.primary:hover {
-      background: #33bbff !important;
-      border-color: #33bbff !important;
+      background: #2589c0 !important;
+      border-color: #5cc8ff !important;
     }
     #putt-ui input:focus {
       border-color: #00aaff !important;
@@ -79,13 +79,54 @@ export function forceCreateUI() {
     }
     #putt-status {
       font-size: clamp(0.52rem, 0.9vw, 0.65rem) !important;
-      color: #aaa !important;
-      margin-bottom: 0.32rem;
-      background: #111;
-      padding: 0.22rem 0.34rem;
-      border-radius: 0.22rem;
-      border-left: 2px solid #00aaff;
+      color: #cbd2dd !important;
+      margin-bottom: 0.52rem;
+      background: #101215;
+      padding: 0.36rem 0.48rem;
+      border-radius: 0.32rem;
+      border-left: 0.18rem solid #5cc8ff;
       overflow-wrap: anywhere;
+    }
+    #putt-body {
+      padding: 0.65rem;
+      max-height: min(84vh, 58rem);
+      overflow: auto;
+    }
+    #putt-module-board {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.34rem;
+      margin-bottom: 0.62rem;
+    }
+    #putt-ui .putt-module {
+      min-height: 3.2rem;
+      text-align: left;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 0.22rem;
+      background: #20242b !important;
+      border-color: #3a424d !important;
+    }
+    #putt-ui .putt-module[data-enabled="true"] {
+      border-color: #80d48a !important;
+      background: #1f3029 !important;
+    }
+    #putt-ui .putt-module strong {
+      display: block;
+      font-size: clamp(0.55rem, 0.9vw, 0.68rem);
+      font-weight: 800;
+      line-height: 1.1;
+    }
+    #putt-ui .putt-module span {
+      color: #aeb8c7;
+      font-size: clamp(0.48rem, 0.78vw, 0.58rem);
+      line-height: 1.15;
+    }
+    #putt-ui .putt-section-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.4rem;
     }
   `;
   container.appendChild(style);
@@ -93,8 +134,8 @@ export function forceCreateUI() {
   const titlebar = document.createElement("div");
   titlebar.id = "putt-titlebar";
   titlebar.style =
-    "font-weight:900;margin-bottom:0.65rem;display:flex;justify-content:space-between;border-bottom:1px solid #333;padding-bottom:0.45rem;cursor:move;user-select:none;letter-spacing:0.5px;font-size:clamp(0.68rem,1.25vw,0.86rem);color:#00aaff;text-transform:uppercase;";
-  titlebar.innerHTML = `<span>Putt Cheats v0.9</span><span id="putt-min" style="cursor:pointer;padding:0 5px;color:#fff;">_</span>`;
+    "font-weight:900;display:flex;justify-content:space-between;align-items:center;gap:0.5rem;background:#101215;border-bottom:1px solid #343942;padding:0.62rem 0.72rem;cursor:move;user-select:none;font-size:clamp(0.68rem,1.25vw,0.88rem);color:#f5f7fb;text-transform:uppercase;";
+  titlebar.innerHTML = `<span>Putt Monkey</span><span id="putt-min" style="cursor:pointer;padding:0 5px;color:#9ee0ff;">_</span>`;
 
   const body = document.createElement("div");
   body.id = "putt-body";
@@ -103,8 +144,13 @@ export function forceCreateUI() {
   status.id = "putt-status";
   status.textContent = "INITIALIZING SYSTEM...";
 
-  body.append(
-    status,
+  const modules = document.createElement("div");
+  modules.id = "putt-module-board";
+  renderModuleBoard(modules);
+
+  const detailGrid = document.createElement("div");
+  detailGrid.className = "putt-section-grid";
+  detailGrid.append(
     createTeleportSection(actions),
     createPowerupsSection(actions),
     createPlayerItemsSection(actions),
@@ -113,6 +159,12 @@ export function forceCreateUI() {
       getTrajectoriesEnabled: () => state.trajectoriesEnabled,
       updateStatus,
     }),
+  );
+
+  body.append(
+    status,
+    modules,
+    detailGrid,
   );
 
   container.append(titlebar, body);
@@ -134,6 +186,50 @@ export function forceCreateUI() {
   actions.refreshPlayerItemUI?.();
   actions.refreshPlayerEffectUI?.();
   return true;
+}
+
+export function toggleUI() {
+  const body = document.getElementById("putt-body");
+  const min = document.getElementById("putt-min");
+  if (!body) {
+    return forceCreateUI();
+  }
+  const hidden = body.style.display === "none";
+  body.style.display = hidden ? "block" : "none";
+  if (min) min.textContent = hidden ? "_" : "+";
+  const container = document.getElementById("putt-ui");
+  if (container) fitUiToViewport(container);
+  return true;
+}
+
+export function refreshModuleBoard() {
+  const modules = document.getElementById("putt-module-board");
+  if (modules) renderModuleBoard(modules);
+}
+
+function renderModuleBoard(root) {
+  const modules = actions.getModules?.() || [];
+  if (!modules.length) {
+    root.innerHTML = "";
+    return;
+  }
+  root.innerHTML = "";
+  modules.forEach((module) => {
+    const button = document.createElement("button");
+    button.className = "putt-module";
+    button.type = "button";
+    button.dataset.moduleId = module.id;
+    button.dataset.enabled = String(Boolean(module.isEnabled?.()));
+    button.title = module.description || module.label;
+    const key = module.keybind ? ` · ${module.keybind}` : "";
+    button.innerHTML = `<strong>${escapeHtml(module.label)}</strong><span>${escapeHtml(module.category)}${escapeHtml(key)}</span>`;
+    button.addEventListener("click", () => {
+      actions.invokeModule?.(module.id);
+      renderModuleBoard(root);
+      updateStatus();
+    });
+    root.appendChild(button);
+  });
 }
 
 function dedupeExistingUI() {
@@ -232,4 +328,12 @@ function fitUiToViewport(container) {
     const scale = Math.min(1, maxWidth / rect.width, maxHeight / rect.height);
     container.style.transform = `scale(${Math.max(0.68, scale).toFixed(3)})`;
   });
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }

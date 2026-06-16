@@ -8,6 +8,8 @@ declare global {
       import(specifier: string, ...args: any[]): Promise<any>;
     };
     puttCheats: PuttAnyRecord;
+    puttModules?: PuttAnyRecord;
+    puttKeybinds?: PuttAnyRecord;
     __puttUiContainer?: HTMLElement | null;
     __puttWsHookInstalled?: boolean;
     __puttLocalHealthTimer?: ReturnType<typeof setInterval> | null;
