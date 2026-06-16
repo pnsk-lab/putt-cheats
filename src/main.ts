@@ -1765,7 +1765,34 @@ window.puttCheats = {
   },
 
   repairLocalState() {
-    return clearLocalPlayerState();
+    window.puttCheats.syncFromGame();
+    const local = getLocalNetPlayer();
+    if (!state.localUid || !local?.state) {
+      alert("Local player is not ready.");
+      return false;
+    }
+
+    const recoveredHoleState = recoverLocalStateForCurrentHole({ force: false });
+    const clearedRuntimeState = clearLocalPlayerState({ silent: true });
+    const refreshedLocal = getLocalNetPlayer();
+
+    if (refreshedLocal?.state && state.localUid) {
+      if (Number(refreshedLocal.state.phase) === PLAYER_PHASE.Simulating && isLocalBallNearlyStopped()) {
+        forceLocalBallStopped("manual resync");
+      } else {
+        setLocalState(clonePlain(refreshedLocal.state));
+      }
+    }
+
+    refreshPlayerItemUI({ skipSync: true });
+    refreshPlayerEffectUI();
+    updateStatus(recoveredHoleState ? "Resynced state + hole" : "Resynced state");
+    log("[putt:INFO] repaired local state", {
+      localId: state.localUid,
+      recoveredHoleState,
+      clearedRuntimeState,
+    });
+    return true;
   },
 };
 
@@ -2144,6 +2171,7 @@ configureUI({
   clearPlayerEffectState: (...args) => window.puttCheats.clearPlayerEffectState(...args),
   armPutBumper: () => window.puttCheats.armPutBumper(),
   setTrajectoriesEnabled,
+  repairLocalState: (...args) => window.puttCheats.repairLocalState(...args),
   deleteNearest: () => window.puttCheats.deleteNearest(),
 });
 
