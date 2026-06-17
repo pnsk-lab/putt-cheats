@@ -31,6 +31,8 @@ export const state: any = {
   deletedPlaceableKeys: new Set(),
   removeFatassesEnabled: false,
   removeFatassesOriginalScales: new Map(),
+  welcomeShown: false,
+  openModuleCategories: new Set(["Core", "Teleport", "Powerups", "Players", "World", "Visuals"]),
 };
 
 export const log = console.log.bind(console);

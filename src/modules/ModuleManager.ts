@@ -9,7 +9,7 @@ export type PuttModule = {
   description: string;
   category: ModuleCategory;
   keybind?: string;
-  mode?: "action" | "toggle";
+  mode?: "action" | "toggle" | "panel" | "arm";
   run?: () => unknown;
   enable?: () => unknown;
   disable?: () => unknown;
@@ -18,12 +18,14 @@ export type PuttModule = {
 
 export class ModuleManager {
   private modules = new Map<string, PuttModule>();
+  private listeners = new Set<() => void>();
 
   register(module: PuttModule) {
     this.modules.set(module.id, module);
     if (module.keybind) {
       keybindManager.bind(module.keybind, () => this.invoke(module.id));
     }
+    this.notify();
   }
 
   get(id: string) {
@@ -49,6 +51,7 @@ export class ModuleManager {
     try {
       if (module.mode === "toggle") return this.toggle(id);
       module.run?.();
+      this.notify();
       return true;
     } catch (e) {
       log("[putt:WARN] module failed", id, e);
@@ -62,13 +65,32 @@ export class ModuleManager {
     try {
       if (enabled) module.enable?.();
       else module.disable?.();
+      this.notify();
       return true;
     } catch (e) {
       log("[putt:WARN] module toggle failed", id, e);
       return false;
     }
   }
+
+  subscribe(listener: () => void) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  emitChange() {
+    this.notify();
+  }
+
+  private notify() {
+    this.listeners.forEach((listener) => {
+      try {
+        listener();
+      } catch (e) {
+        log("[putt:WARN] module listener failed", e);
+      }
+    });
+  }
 }
 
 export const moduleManager = new ModuleManager();
-

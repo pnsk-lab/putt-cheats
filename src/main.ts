@@ -38,6 +38,8 @@ import {
   createUI,
   forceCreateUI,
   refreshModuleBoard,
+  toggleFormPanel,
+  isPanelOpen,
   toggleUI,
   updateStatus,
 } from "./ui.js";
@@ -52,6 +54,7 @@ let powerupDetectionTimer = null;
 let uiObserver = null;
 let playerUiRefreshTimer = null;
 let refreshingPlayerUi = false;
+let activeCanvasArm = null;
 let lastUserListRequestedAt = 0;
 let localHealthTimer = null;
 let localStillSince = 0;
@@ -1131,18 +1134,27 @@ function distance3(a, b) {
   return Math.hypot(dx, dy, dz);
 }
 
-function createBumperClickOverlay() {
+function createClickOverlay(label) {
   document.getElementById("putt-click-overlay")?.remove();
   document.getElementById("putt-bumper-click-overlay")?.remove();
   const overlay = document.createElement("div");
   overlay.id = "putt-click-overlay";
   overlay.style =
-    "position:fixed;inset:0;z-index:2147483645;cursor:crosshair;background:rgba(0,0,0,0.01);";
+    "position:fixed;inset:0;z-index:2147483645;cursor:crosshair;background:rgba(92,200,255,0.08);border:0.32rem solid rgba(92,200,255,0.22);box-sizing:border-box;display:flex;align-items:flex-start;justify-content:center;pointer-events:auto;";
+  const title = document.createElement("div");
+  title.textContent = label || "Click target";
+  title.style =
+    "margin-top:8vh;color:#f5f7fb;background:rgba(11,13,16,0.72);border:1px solid rgba(92,200,255,0.36);border-radius:0.45rem;box-shadow:0 0.7rem 2rem rgba(0,0,0,0.35);backdrop-filter:blur(0.35rem);padding:0.72rem 1rem;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:0.9rem;font-weight:900;text-transform:uppercase;letter-spacing:0;";
+  overlay.appendChild(title);
   document.body.appendChild(overlay);
   return overlay;
 }
 
 function armCanvasClick(label, onPosition, onCancelCallback, resolvePosition = getWorldPositionFromCanvasClick) {
+  if (activeCanvasArm) {
+    activeCanvasArm.cancel("Click cancelled");
+    return false;
+  }
   updateStatus(label);
   const canvas = document.getElementById("GameCanvas");
   if (!canvas) return alert("GameCanvas not found.");
@@ -1153,7 +1165,7 @@ function armCanvasClick(label, onPosition, onCancelCallback, resolvePosition = g
       log("[putt:WARN] failed to exit pointer lock", e);
     }
   }
-  const overlay = createBumperClickOverlay();
+  const overlay = createClickOverlay(label);
   const onClick = (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1170,16 +1182,21 @@ function armCanvasClick(label, onPosition, onCancelCallback, resolvePosition = g
     if (event.type === "keydown" && event.key !== "Escape") return;
     event.preventDefault();
     event.stopPropagation();
-    cleanup();
-    if (typeof onCancelCallback === "function") onCancelCallback();
-    updateStatus("Click cancelled");
+    cancelArm("Click cancelled");
   };
   const cleanup = () => {
     overlay.removeEventListener("click", onClick, true);
     overlay.removeEventListener("contextmenu", onCancel, true);
     document.removeEventListener("keydown", onCancel, true);
     overlay.remove();
+    if (activeCanvasArm?.overlay === overlay) activeCanvasArm = null;
   };
+  const cancelArm = (message) => {
+    cleanup();
+    if (typeof onCancelCallback === "function") onCancelCallback();
+    updateStatus(message || "Click cancelled");
+  };
+  activeCanvasArm = { overlay, cancel: cancelArm };
   overlay.addEventListener("click", onClick, { once: true, capture: true });
   overlay.addEventListener("contextmenu", onCancel, { once: true, capture: true });
   document.addEventListener("keydown", onCancel, { capture: true });
@@ -1718,6 +1735,8 @@ registerBuiltinModules(moduleManager, {
   deleteNearest: () => puttActions.deleteNearest(),
   setTrajectoriesEnabled,
   updateStatus,
+  togglePanel: toggleFormPanel,
+  isPanelOpen,
 });
 
 keybindManager.install();
@@ -1743,6 +1762,8 @@ configureUI({
   deleteNearest: () => puttActions.deleteNearest(),
   getModules: () => moduleManager.getAll(),
   invokeModule: (id) => moduleManager.invoke(id),
+  onModulesChanged: (callback) => moduleManager.subscribe(callback),
+  notifyModulesChanged: () => moduleManager.emitChange(),
   refreshModuleBoard,
 });
 

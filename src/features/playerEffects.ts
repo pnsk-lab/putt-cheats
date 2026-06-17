@@ -8,7 +8,6 @@ export function createPlayerEffectsSection(actions) {
       <select id="sel-player-effect" style="width:100%;"></select>
     </div>
     <button id="btn-apply-player-effect" class="primary" style="width:100%;margin-bottom:12px;font-weight:900;">APPLY EFFECT</button>
-    <button id="btn-clear-player-effect" style="width:100%;margin-bottom:12px;font-weight:900;">CLEAR MY STATE</button>
   `));
   root.querySelector("#sel-effect-player").addEventListener("focus", () => actions.refreshPlayerEffectUI?.());
   root.querySelector("#btn-apply-player-effect").addEventListener("click", () => {
@@ -16,9 +15,6 @@ export function createPlayerEffectsSection(actions) {
       root.querySelector("#sel-effect-player").value,
       root.querySelector("#sel-player-effect").value,
     );
-  });
-  root.querySelector("#btn-clear-player-effect").addEventListener("click", () => {
-    actions.clearPlayerEffectState?.();
   });
   return root;
 }

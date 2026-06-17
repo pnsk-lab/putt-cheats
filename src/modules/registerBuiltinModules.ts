@@ -18,6 +18,8 @@ export type ModuleActions = {
   deleteNearest: () => unknown;
   setTrajectoriesEnabled: (enabled: boolean) => unknown;
   updateStatus: (message?: string) => unknown;
+  togglePanel: (id: string) => unknown;
+  isPanelOpen: (id: string) => boolean;
 };
 
 export function registerBuiltinModules(manager: ModuleManager, actions: ModuleActions) {

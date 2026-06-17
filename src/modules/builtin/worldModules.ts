@@ -7,6 +7,7 @@ export function worldModules(actions: any) {
       label: "Place Bumper",
       description: "Arm a course click to spawn a bumper.",
       category: "World",
+      mode: "arm",
       keybind: "KeyB",
       run: actions.armPutBumper,
     },
@@ -37,4 +38,3 @@ export function worldModules(actions: any) {
     },
   ];
 }
-
