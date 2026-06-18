@@ -137,7 +137,6 @@ function setLocalState(nextState) {
     local.state = state.lastKnownLocalState;
     if (typeof local.stateUpdated === "function") {
       local.stateUpdated();
-      return true;
     } else {
       notifyPlayerStateUpdated(local);
     }
@@ -1604,7 +1603,7 @@ function getPowerupCount() {
 function enqueuePowerups(ids, replaceVisible) {
   ids = sanitizeQueuedPowerups(ids);
   if (ids.length === 0) return false;
-  if (!hasLocalCardState()) {
+  if (!hasLocalCardState() || !canMutateLocalCardsNow()) {
     if (replaceVisible) state.powerupQueue = [];
     state.powerupQueue.push(...ids);
     startPowerupRefillLoop();
@@ -1634,6 +1633,7 @@ function refillPowerupSlots() {
     return false;
   }
   if (!hasLocalCardState()) return false;
+  if (!canMutateLocalCardsNow()) return false;
   state.powerupQueue = sanitizeQueuedPowerups(state.powerupQueue);
   if (state.powerupQueue.length === 0) return false;
   const max = getMaxHandSize();
@@ -1652,6 +1652,17 @@ function refillPowerupSlots() {
 
 function hasLocalCardState() {
   return Boolean(state.localUid && (getLocalNetPlayer()?.state || state.lastKnownLocalState));
+}
+
+function canMutateLocalCardsNow() {
+  const local = getLocalNetPlayer();
+  const phase = Number(local?.state?.phase ?? state.lastKnownLocalState?.phase);
+  return (
+    phase === PLAYER_PHASE.StartHole ||
+    phase === PLAYER_PHASE.WaitingOnInput ||
+    phase === PLAYER_PHASE.InputReceived ||
+    phase === PLAYER_PHASE.StrokeDone
+  );
 }
 
 function sanitizeQueuedPowerups(ids) {
